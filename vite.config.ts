@@ -5,6 +5,7 @@ import { componentTagger } from "lovable-tagger";
 
 // https://vitejs.dev/config/
 export default defineConfig(({ mode }) => ({
+  base: mode === 'production' ? '/KV-TecHub/' : '/',  // Replace 'org-repo-name' with your org/repo (trailing slash)
   server: {
     host: "::",
     port: 8080,
