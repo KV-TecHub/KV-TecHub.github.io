@@ -1,36 +1,54 @@
-name: Deploy to GitHub Pages
+name: Deploy Static Site (dist) to SiteGround Subdomain
 
 on:
   push:
-    branches: [ main ]
+    branches: ["main"]
+  workflow_dispatch:
 
-permissions:
-  contents: read
-  pages: write
-  id-token: write
+concurrency:
+  group: deploy-laveranda-kvtechub
+  cancel-in-progress: true
+
+env:
+  NODE_VERSION: "22"
+
+  DEPLOY_HOST: "gnldm1021.siteground.biz"
+  DEPLOY_PORT: "18765"
+  DEPLOY_USER: "u2886-xxymc8nixnud"
+  DEPLOY_ROOT: "/home/u2886-xxymc8nixnud/www/laveranda.kvtechub.com"
+
+  KEEP_RELEASES: "5"
+  SPA_FALLBACK: "true"
 
 jobs:
-  deploy:
-    environment:
-      name: github-pages
-      url: ${{ steps.deployment.outputs.page_url }}
+  build:
     runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.meta.outputs.release_id }}
+      artifact_tgz: ${{ steps.meta.outputs.artifact_tgz }}
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-      - name: Setup Node
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: 'npm'
-      - name: Install and build
-        run: npm ci && npm run build
-      - name: Setup Pages
-        uses: actions/configure-pages@v5
-      - name: Upload artifact
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: './dist'
-      - name: Deploy
-        id: deployment
-        uses: actions/deploy-pages@v4
+          node-version: ${{ env.NODE_VERSION }}
+          cache: npm
+
+      - name: Install deps
+        run: npm ci --no-audit --no-fund
+
+      - name: Build (dist)
+        run: npm run build
+
+      - name: Verify dist exists
+        run: |
+          test -d dist
+          test -f dist/index.html || echo "dist/index.html not found (ok if not SPA)" >&2
+          ls -lah dist | head -n 80
+
+      - name: Create release artifact
+        id: meta
+        env:
+          GZIP: -n
+        run: |
+          RELEASE_ID="$_
