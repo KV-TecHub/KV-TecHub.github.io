@@ -19,7 +19,7 @@ env:
   DEPLOY_ROOT: "/home/u2886-xxymc8nixnud/www/laveranda.kvtechub.com"
 
   KEEP_RELEASES: "5"
-  SPA_FALLBACK: "true"
+  SPA_FALLBACK: "false"
 
 jobs:
   build:
@@ -170,9 +170,10 @@ jobs:
               : > "$HTACCESS"
               printf '%s\n' 'RewriteEngine On' >> "$HTACCESS"
               printf '%s\n' 'RewriteBase /' >> "$HTACCESS"
-              printf '%s\n' 'RewriteRule ^index\.html$ - [L]' >> "$HTACCESS"
-              printf '%s\n' 'RewriteCond %{REQUEST_FILENAME} !-f' >> "$HTACCESS"
-              printf '%s\n' 'RewriteCond %{REQUEST_FILENAME} !-d' >> "$HTACCESS"
+              printf '%s\n' 'RewriteCond %{REQUEST_FILENAME} -f [OR]' >> "$HTACCESS"
+              printf '%s\n' 'RewriteCond %{REQUEST_FILENAME} -d' >> "$HTACCESS"
+              printf '%s\n' 'RewriteRule ^ - [L]' >> "$HTACCESS"
+              printf '%s\n' 'RewriteRule ^assets/ - [L]' >> "$HTACCESS"
               printf '%s\n' 'RewriteRule . /index.html [L]' >> "$HTACCESS"
             fi
 
