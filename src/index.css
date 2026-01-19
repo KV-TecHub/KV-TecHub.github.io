@@ -117,10 +117,14 @@
 
   html {
     scroll-behavior: smooth;
+    width: 100%;
+    overflow-x: hidden;
   }
 
   body {
     @apply bg-background text-foreground font-body antialiased;
+    width: 100%;
+    overflow-x: hidden;
   }
 
   h1, h2, h3, h4, h5, h6 {
@@ -143,7 +147,7 @@
   }
 
   .btn-hero {
-    @apply inline-flex items-center justify-center px-8 py-4 text-base font-medium 
+    @apply inline-flex items-center justify-center px-8 py-4 text-base font-medium
            bg-primary text-primary-foreground rounded-sm
            transition-all duration-300 ease-out
            hover:shadow-warm hover:-translate-y-0.5
@@ -151,7 +155,7 @@
   }
 
   .btn-outline-hero {
-    @apply inline-flex items-center justify-center px-8 py-4 text-base font-medium 
+    @apply inline-flex items-center justify-center px-8 py-4 text-base font-medium
            border-2 border-warm-white text-warm-white rounded-sm
            transition-all duration-300 ease-out
            hover:bg-warm-white hover:text-foreground
@@ -159,7 +163,7 @@
   }
 
   .menu-card {
-    @apply relative overflow-hidden rounded-lg bg-card p-6 
+    @apply relative overflow-hidden rounded-lg bg-card p-6
            transition-all duration-500 ease-out
            hover:shadow-elevated hover:-translate-y-1;
   }
