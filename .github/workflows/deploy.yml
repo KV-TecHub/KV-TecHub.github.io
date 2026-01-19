@@ -12,10 +12,12 @@ concurrency:
 
 env:
   NODE_VERSION: "22"
+
   DEPLOY_HOST: "gnldm1021.siteground.biz"
   DEPLOY_PORT: "18765"
   DEPLOY_USER: "u2886-xxymc8nixnud"
   DEPLOY_ROOT: "/home/u2886-xxymc8nixnud/www/laveranda.kvtechub.com"
+
   KEEP_RELEASES: "5"
   SPA_FALLBACK: "true"
 
@@ -53,6 +55,7 @@ jobs:
         run: |
           set -euo pipefail
           test -d dist
+          test -f dist/index.html || true
           ls -lah dist | head -n 80
 
       - name: Pack dist tarball + sha
@@ -62,6 +65,7 @@ jobs:
           GZIP: -n
         run: |
           set -euo pipefail
+
           RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_NUMBER}"
           TGZ="dist-${RELEASE_ID}.tar.gz"
           SHA="dist-${RELEASE_ID}.tar.gz.sha256"
@@ -104,7 +108,6 @@ jobs:
             set -e
             mkdir -p "${{ env.DEPLOY_ROOT }}/incoming"
             mkdir -p "${{ env.DEPLOY_ROOT }}/releases"
-            mkdir -p "${{ env.DEPLOY_ROOT }}/public_html"
 
       - name: Upload tarball
         uses: appleboy/scp-action@v0.1.7
@@ -130,7 +133,7 @@ jobs:
           target: ${{ env.DEPLOY_ROOT }}/incoming
           overwrite: true
 
-      - name: Extract + switch symlinks
+      - name: Atomic extract + switch current
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ env.DEPLOY_HOST }}
@@ -151,12 +154,19 @@ jobs:
 
             (cd "${ROOT}/incoming" && sha256sum -c "$(basename "$SHA")")
 
-            RELEASE_DIR="${ROOT}/releases/${RELEASE_ID}"
-            mkdir -p "$RELEASE_DIR"
-            tar -xzf "$TGZ" -C "$RELEASE_DIR"
+            FINAL_DIR="${ROOT}/releases/${RELEASE_ID}"
+            TMP_DIR="${ROOT}/releases/.tmp-${RELEASE_ID}"
 
+            rm -rf "$TMP_DIR" || true
+            mkdir -p "$TMP_DIR"
+            tar -xzf "$TGZ" -C "$TMP_DIR"
+
+            # sanity check: must contain at least one file
+            test -n "$(ls -A "$TMP_DIR")"
+
+            # optional SPA routing
             if [ "${{ env.SPA_FALLBACK }}" = "true" ]; then
-              HTACCESS="${RELEASE_DIR}/.htaccess"
+              HTACCESS="${TMP_DIR}/.htaccess"
               : > "$HTACCESS"
               printf '%s\n' 'RewriteEngine On' >> "$HTACCESS"
               printf '%s\n' 'RewriteBase /' >> "$HTACCESS"
@@ -166,17 +176,22 @@ jobs:
               printf '%s\n' 'RewriteRule . /index.html [L]' >> "$HTACCESS"
             fi
 
+            # promote tmp -> final atomically
+            rm -rf "$FINAL_DIR" || true
+            mv "$TMP_DIR" "$FINAL_DIR"
+
+            # update previous/current safely
             if [ -L "${ROOT}/current" ]; then
               ln -sfnT "$(readlink "${ROOT}/current")" "${ROOT}/previous" || true
             fi
+            ln -sfnT "$FINAL_DIR" "${ROOT}/current"
 
-            ln -sfnT "$RELEASE_DIR" "${ROOT}/current"
-            ln -sfnT "${ROOT}/current" "${ROOT}/public_html"
-
+            # cleanup incoming artifacts
             rm -f "$TGZ" "$SHA" || true
 
+            # prune old releases (keep last N)
             KEEP="${{ env.KEEP_RELEASES }}"
             cd "${ROOT}/releases"
-            ls -1t | tail -n +"$((KEEP+1))" | xargs -r rm -rf
+            ls -1t | grep -v '^\.' | tail -n +"$((KEEP+1))" | xargs -r rm -rf
 
             echo "Deployed: ${RELEASE_ID}"
