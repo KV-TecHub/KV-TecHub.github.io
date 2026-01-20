@@ -26,8 +26,6 @@ jobs:
     runs-on: ubuntu-latest
     outputs:
       release_id: ${{ steps.meta.outputs.release_id }}
-      artifact_tgz: ${{ steps.meta.outputs.artifact_tgz }}
-      artifact_sha: ${{ steps.meta.outputs.artifact_sha }}
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -55,43 +53,41 @@ jobs:
         run: |
           set -euo pipefail
           test -d dist
-          test -f dist/index.html || true
+          test -f dist/index.html
           ls -lah dist | head -n 80
 
-      - name: Pack dist tarball + sha
+      - name: Create release id
         id: meta
+        shell: bash
+        run: |
+          set -euo pipefail
+          RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_NUMBER}"
+          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
+
+      - name: Pack dist + sha (normalized names)
         shell: bash
         env:
           GZIP: -n
         run: |
           set -euo pipefail
+          tar -C dist --owner=0 --group=0 --mtime='UTC 1970-01-01' -czf dist.tar.gz .
+          sha256sum dist.tar.gz > dist.tar.gz.sha256
+          ls -lah dist.tar.gz dist.tar.gz.sha256
 
-          RELEASE_ID="$(date -u +%Y%m%d%H%M%S)-${GITHUB_RUN_NUMBER}"
-          TGZ="dist-${RELEASE_ID}.tar.gz"
-          SHA="dist-${RELEASE_ID}.tar.gz.sha256"
-
-          echo "release_id=${RELEASE_ID}" >> "$GITHUB_OUTPUT"
-          echo "artifact_tgz=${TGZ}" >> "$GITHUB_OUTPUT"
-          echo "artifact_sha=${SHA}" >> "$GITHUB_OUTPUT"
-
-          tar -C dist --owner=0 --group=0 --mtime='UTC 1970-01-01' -czf "$TGZ" .
-          sha256sum "$TGZ" > "$SHA"
-          ls -lah "$TGZ" "$SHA"
-
-      - name: Upload build artifacts
+      - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:
           name: dist-release
           path: |
-            ${{ steps.meta.outputs.artifact_tgz }}
-            ${{ steps.meta.outputs.artifact_sha }}
+            dist.tar.gz
+            dist.tar.gz.sha256
           retention-days: 7
 
   deploy:
     runs-on: ubuntu-latest
     needs: build
     steps:
-      - name: Download build artifacts
+      - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           name: dist-release
@@ -106,8 +102,8 @@ jobs:
           passphrase: ${{ secrets.DEPLOY_RSA_PASSWORD }}
           script: |
             set -e
-            mkdir -p "${{ env.DEPLOY_ROOT }}/incoming"
-            mkdir -p "${{ env.DEPLOY_ROOT }}/releases"
+            mkdir -p "${{ env.DEPLOY_ROOT }}/incoming" "${{ env.DEPLOY_ROOT }}/releases"
+            rm -f "${{ env.DEPLOY_ROOT }}/incoming/dist.tar.gz" "${{ env.DEPLOY_ROOT }}/incoming/dist.tar.gz.sha256" || true
 
       - name: Upload tarball
         uses: appleboy/scp-action@v0.1.7
@@ -117,7 +113,7 @@ jobs:
           username: ${{ env.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_RSA_PRIVATE }}
           passphrase: ${{ secrets.DEPLOY_RSA_PASSWORD }}
-          source: ${{ needs.build.outputs.artifact_tgz }}
+          source: dist.tar.gz
           target: ${{ env.DEPLOY_ROOT }}/incoming
           overwrite: true
 
@@ -129,7 +125,7 @@ jobs:
           username: ${{ env.DEPLOY_USER }}
           key: ${{ secrets.DEPLOY_RSA_PRIVATE }}
           passphrase: ${{ secrets.DEPLOY_RSA_PASSWORD }}
-          source: ${{ needs.build.outputs.artifact_sha }}
+          source: dist.tar.gz.sha256
           target: ${{ env.DEPLOY_ROOT }}/incoming
           overwrite: true
 
@@ -146,25 +142,27 @@ jobs:
 
             ROOT="${{ env.DEPLOY_ROOT }}"
             RELEASE_ID="${{ needs.build.outputs.release_id }}"
-            TGZ="${ROOT}/incoming/${{ needs.build.outputs.artifact_tgz }}"
-            SHA="${ROOT}/incoming/${{ needs.build.outputs.artifact_sha }}"
+
+            TGZ="${ROOT}/incoming/dist.tar.gz"
+            SHA="${ROOT}/incoming/dist.tar.gz.sha256"
 
             test -f "$TGZ"
             test -f "$SHA"
 
-            (cd "${ROOT}/incoming" && sha256sum -c "$(basename "$SHA")")
+            (cd "${ROOT}/incoming" && sha256sum -c "dist.tar.gz.sha256")
 
             FINAL_DIR="${ROOT}/releases/${RELEASE_ID}"
             TMP_DIR="${ROOT}/releases/.tmp-${RELEASE_ID}"
 
-            rm -rf "$TMP_DIR" || true
+            rm -rf "$TMP_DIR" "$FINAL_DIR" || true
             mkdir -p "$TMP_DIR"
             tar -xzf "$TGZ" -C "$TMP_DIR"
 
-            # sanity check: must contain at least one file
+            # Strong sanity check for Vite dist
+            test -f "$TMP_DIR/index.html"
             test -n "$(ls -A "$TMP_DIR")"
 
-            # optional SPA routing
+            # Optional SPA routing
             if [ "${{ env.SPA_FALLBACK }}" = "true" ]; then
               HTACCESS="${TMP_DIR}/.htaccess"
               : > "$HTACCESS"
@@ -177,22 +175,30 @@ jobs:
               printf '%s\n' 'RewriteRule . /index.html [L]' >> "$HTACCESS"
             fi
 
-            # promote tmp -> final atomically
-            rm -rf "$FINAL_DIR" || true
+            # Promote tmp -> final atomically
             mv "$TMP_DIR" "$FINAL_DIR"
 
-            # update previous/current safely
-            if [ -L "${ROOT}/current" ]; then
-              ln -sfnT "$(readlink "${ROOT}/current")" "${ROOT}/previous" || true
-            fi
-            ln -sfnT "$FINAL_DIR" "${ROOT}/current"
+            # Marker file to verify live release
+            echo "$RELEASE_ID" > "$FINAL_DIR/__release.txt"
 
-            # cleanup incoming artifacts
+            # Update previous/current with ABSOLUTE targets
+            if [ -L "${ROOT}/current" ]; then
+              CUR_ABS="$(readlink -f "${ROOT}/current" || true)"
+              if [ -n "$CUR_ABS" ] && [ -d "$CUR_ABS" ]; then
+                ln -sfn "$CUR_ABS" "${ROOT}/previous"
+              fi
+            fi
+
+            ln -sfn "$FINAL_DIR" "${ROOT}/current"
+
+            # Cleanup incoming artifacts (normalized names)
             rm -f "$TGZ" "$SHA" || true
 
-            # prune old releases (keep last N)
+            # Prune old releases deterministically (by name)
             KEEP="${{ env.KEEP_RELEASES }}"
             cd "${ROOT}/releases"
-            ls -1t | grep -v '^\.' | tail -n +"$((KEEP+1))" | xargs -r rm -rf
+            RELEASES="$(ls -1 | grep -E '^[0-9]{14}-[0-9]+$' | sort -r)"
+            echo "$RELEASES" | tail -n +"$((KEEP+1))" | xargs -r rm -rf
 
             echo "Deployed: ${RELEASE_ID}"
+            echo "Current -> $(readlink -f "${ROOT}/current" || true)"
